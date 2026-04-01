@@ -83,9 +83,9 @@
         .toggle-text { text-align: center; font-size: 0.9rem; margin-top: 15px; color: var(--text-dim); }
         .toggle-text span { color: var(--accent); cursor: pointer; text-decoration: underline; }
 
-        hr { border: 0; border-top: 1px solid var(--border); margin: 1rem 0; }
-        
         .split-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        
+        label { font-size: 0.9rem; color: var(--text-dim); }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
@@ -114,18 +114,27 @@
 
         <div class="card">
             <h3>Add Expense</h3>
-            <input type="text" id="expense-desc" placeholder="What was it for?">
-            <input type="number" id="expense-total-input" placeholder="Total Amount (₹)" step="0.01">
+            <label>What was it for?</label>
+            <input type="text" id="expense-desc" placeholder="e.g. Dinner, Rent">
+            
+            <label>Who paid?</label>
+            <select id="expense-payer-select"></select>
+
+            <label>Total Amount (₹)</label>
+            <input type="number" id="expense-total-input" placeholder="0.00" step="0.01">
+            
             <div class="split-header">
-                <p style="margin:0;"><strong>Split details:</strong></p>
+                <p style="margin:0; font-weight: bold; color: var(--text);">Split details:</p>
                 <button onclick="autoSplit()" class="btn-small">Split Evenly</button>
             </div>
+            
             <div id="participants-list"></div>
             <button onclick="addExpense()" style="margin-top: 1rem;">Save Expense</button>
         </div>
 
         <div class="card">
             <h3>Settle Up</h3>
+            <label>Pay to:</label>
             <select id="settle-to"></select>
             <input type="number" id="settle-amount" placeholder="Amount (₹)" step="0.01">
             <button onclick="settleUp()">Confirm Payment</button>
@@ -147,13 +156,9 @@
         let allUsers = [];
         let isLoginMode = true;
 
-        // --- NEW: Check for saved session on load ---
         function checkSavedUser() {
             const saved = localStorage.getItem('split_app_user');
-            if (saved) {
-                currentUser = JSON.parse(saved);
-                enterApp(false); // don't re-save to localstorage since it's already there
-            }
+            if (saved) { currentUser = JSON.parse(saved); enterApp(false); }
         }
 
         function toggleAuthMode() {
@@ -169,12 +174,7 @@
             const u = document.getElementById('username').value.trim();
             const p = document.getElementById('password').value.trim();
             const { data: users } = await supabaseClient.from('users').select('*').eq('username', u).eq('password', p);
-            if (users?.length > 0) { 
-                currentUser = users[0]; 
-                enterApp(true); 
-            } else { 
-                alert("Invalid credentials."); 
-            }
+            if (users?.length > 0) { currentUser = users[0]; enterApp(true); } else { alert("Invalid credentials."); }
         }
 
         async function signUp() {
@@ -189,31 +189,32 @@
         }
 
         function enterApp(shouldSave) {
-            if (shouldSave) {
-                localStorage.setItem('split_app_user', JSON.stringify(currentUser));
-            }
+            if (shouldSave) localStorage.setItem('split_app_user', JSON.stringify(currentUser));
             document.getElementById('current-user-display').innerText = currentUser.username;
             document.getElementById('login-screen').classList.add('hidden');
             document.getElementById('app-screen').classList.remove('hidden');
             loadAppData();
         }
 
-        function logout() { 
-            localStorage.removeItem('split_app_user');
-            location.reload(); 
-        }
+        function logout() { localStorage.removeItem('split_app_user'); location.reload(); }
 
         async function loadAppData() {
             const { data: users } = await supabaseClient.from('users').select('*');
             allUsers = users;
 
+            // Payer Select in Add Expense
+            const payerSelect = document.getElementById('expense-payer-select');
+            payerSelect.innerHTML = users.map(u => `<option value="${u.id}" ${u.id === currentUser.id ? 'selected' : ''}>${u.username === currentUser.username ? 'You' : u.username}</option>`).join('');
+
+            // Settle Select
             const settleSelect = document.getElementById('settle-to');
             settleSelect.innerHTML = users.filter(u => u.id !== currentUser.id).map(u => `<option value="${u.id}">${u.username}</option>`).join('');
 
+            // Participants Checklist
             const partDiv = document.getElementById('participants-list');
             partDiv.innerHTML = users.map(u => `
                 <div class="participant-row">
-                    <label><input type="checkbox" class="user-check" data-id="${u.id}" checked> ${u.username}</label>
+                    <label style="color:var(--text)"><input type="checkbox" class="user-check" data-id="${u.id}" checked> ${u.username}</label>
                     <input type="number" class="user-amount" data-id="${u.id}" placeholder="0.00" step="0.01">
                 </div>
             `).join('');
@@ -231,13 +232,9 @@
             const checkBoxes = document.querySelectorAll('.user-check');
             const amountInputs = document.querySelectorAll('.user-amount');
             const selectedCount = Array.from(checkBoxes).filter(cb => cb.checked).length;
-            
             if (selectedCount === 0 || total === 0) return;
             const share = (total / selectedCount).toFixed(2);
-            
-            checkBoxes.forEach((cb, i) => {
-                amountInputs[i].value = cb.checked ? share : "";
-            });
+            checkBoxes.forEach((cb, i) => { amountInputs[i].value = cb.checked ? share : ""; });
         }
 
         function calculateBalances(users, expenses, shares, settlements) {
@@ -261,7 +258,7 @@
 
             const balDiv = document.getElementById('balances-list');
             const otherUsers = users.filter(u => u.id !== currentUser.id);
-            if (otherUsers.length === 0) { balDiv.innerHTML = "<p><small>Waiting for friends to join...</small></p>"; return; }
+            if (otherUsers.length === 0) { balDiv.innerHTML = "<p><small>Invite friends to start splitting!</small></p>"; return; }
 
             balDiv.innerHTML = otherUsers.map(u => {
                 const b = userBalances[u.id].toFixed(2);
@@ -281,29 +278,40 @@
                 <div class="log-item">
                     <strong>${uMap[e.paid_by_id]}</strong> paid <strong>₹${parseFloat(e.total_amount).toFixed(2)}</strong> for ${e.description}
                     <span class="timestamp">${new Date(e.created_at).toLocaleString()}</span>
-                </div>`).join('') : "<p><small>None</small></p>");
+                </div>`).join('') : "<p><small>No recent activity.</small></p>");
 
             html += "<h4 style='margin-top:1rem'>Your Settlements</h4>" + (filteredSettlements.length ? filteredSettlements.map(s => `
                 <div class="log-item">
                     <strong>${uMap[s.payer_id]}</strong> → <strong>${uMap[s.payee_id]}</strong>: ₹${parseFloat(s.amount).toFixed(2)}
                     <span class="timestamp">${new Date(s.created_at).toLocaleString()}</span>
-                </div>`).join('') : "<p><small>None</small></p>");
+                </div>`).join('') : "<p><small>No settlements found.</small></p>");
             historyDiv.innerHTML = html;
         }
 
         async function addExpense() {
             const desc = document.getElementById('expense-desc').value;
             const total = parseFloat(document.getElementById('expense-total-input').value) || 0;
+            const payerId = document.getElementById('expense-payer-select').value;
             let shares = [];
+
             document.querySelectorAll('.user-check').forEach((cb, i) => {
                 if (cb.checked) {
                     const amt = parseFloat(document.querySelectorAll('.user-amount')[i].value) || 0;
                     shares.push({ user_id: cb.dataset.id, share_amount: amt });
                 }
             });
-            if (!desc || shares.length === 0) return alert("Fill details.");
-            const { data: exp } = await supabaseClient.from('expenses').insert([{ description: desc, total_amount: total, paid_by_id: currentUser.id }]).select();
+
+            if (!desc || shares.length === 0 || total <= 0) return alert("Please enter all details.");
+            
+            const { data: exp } = await supabaseClient.from('expenses').insert([{ 
+                description: desc, 
+                total_amount: total, 
+                paid_by_id: payerId 
+            }]).select();
+
             await supabaseClient.from('expense_shares').insert(shares.map(s => ({ ...s, expense_id: exp[0].id })));
+            
+            // Reset UI
             document.getElementById('expense-desc').value = '';
             document.getElementById('expense-total-input').value = '';
             loadAppData();

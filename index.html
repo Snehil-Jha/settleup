@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Friend Split | Pro</title>
+    <title>SettleUp</title>
     <style>
         :root {
             --bg: #121212;
@@ -83,7 +83,22 @@
         .toggle-text span { color: var(--accent); cursor: pointer; text-decoration: underline; }
 
         .split-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
-        label { font-size: 0.8rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+        /* Only uppercase the field headers */
+        .field-label { 
+            font-size: 0.8rem; 
+            color: var(--text-dim); 
+            text-transform: uppercase; 
+            letter-spacing: 0.5px; 
+            display: block;
+            margin-top: 10px;
+        }
+
+        /* Keep the participant names normal */
+        .participant-row label { 
+            text-transform: none; 
+            font-size: 1rem; 
+            color: var(--text);
+        }
         
         .alert { padding: 10px; border-radius: 6px; font-size: 0.85rem; margin-bottom: 1rem; text-align: center; }
         .alert-info { background: rgba(0, 229, 209, 0.1); color: var(--accent); border: 1px solid var(--accent); }
@@ -129,13 +144,13 @@
 
         <div class="card">
             <h3>Add Expense</h3>
-            <label>Description</label>
+            <label class="field-label">Description</label>
             <input type="text" id="expense-desc" placeholder="Dinner, Movie, etc.">
             
-            <label>Who paid?</label>
+            <label class="field-label">Who paid?</label>
             <select id="expense-payer-select"></select>
 
-            <label>Total Amount (₹)</label>
+            <label class="field-label">Total Amount (₹)</label>
             <input type="number" id="expense-total-input" placeholder="0.00" step="0.01">
             
             <div class="split-header">
@@ -284,8 +299,9 @@
                 if (partList) {
                     partList.innerHTML = safeProfiles.map(p => `
                         <div class="participant-row">
-                            <label style="color:var(--text)"><input type="checkbox" class="user-check" data-id="${p.id}" checked> ${p.username}</label>
-                            <input type="number" class="user-amount" data-id="${p.id}" placeholder="0.00" step="0.01">
+                            <label><input type="checkbox" class="user-check" data-id="${p.id}" checked> ${p.username}</label>
+                            <input type="number" class="user-amount" data-id="${p.id}" 
+                                placeholder="0.00" step="0.01" oninput="calculateTotalFromShares()">
                         </div>
                     `).join('');
                 }
@@ -308,6 +324,22 @@
                 console.error("Error loading app data:", error);
                 document.getElementById('balances-list').innerHTML = "<p style='color:var(--danger); font-size: 0.8rem;'>Failed to load balances. Check console.</p>";
                 document.getElementById('history-list').innerHTML = "<p style='color:var(--danger); font-size: 0.8rem;'>Failed to load history. Check console.</p>";
+            }
+        }
+
+        function calculateTotalFromShares() {
+            const shareInputs = document.querySelectorAll('.user-amount');
+            let runningTotal = 0;
+
+            shareInputs.forEach(input => {
+                const val = parseFloat(input.value) || 0;
+                runningTotal += val;
+            });
+
+            // Update the main Total Amount field automatically
+            // We use toFixed(2) to keep it formatted like currency
+            if (runningTotal > 0) {
+                document.getElementById('expense-total-input').value = runningTotal.toFixed(2);
             }
         }
 
@@ -353,58 +385,66 @@
             const uMap = Object.fromEntries(profiles.map(p => [p.id, p.username]));
             const historyDiv = document.getElementById('history-list');
 
-            // Filter for expenses where I am either the payer OR I have a share
-            const filteredExpenses = expenses.filter(e => 
+            // 1. FILTER DATA
+            const filteredExpenses = (expenses || []).filter(e => 
                 e.paid_by_id === currentProfile.id || 
-                shares.some(s => s.expense_id === e.id && s.user_id === currentProfile.id)
+                (shares || []).some(s => s.expense_id === e.id && s.user_id === currentProfile.id)
             );
 
-            const filteredSettlements = settlements.filter(s => 
+            const filteredSettlements = (settlements || []).filter(s => 
                 s.payer_id === currentProfile.id || s.payee_id === currentProfile.id
             );
             
             let html = "<h4>Expenses</h4>";
             
+            // 2. RENDER EXPENSES
             if (filteredExpenses.length === 0) {
-                html += "<p><small>No recent activity.</small></p>";
+                html += "<p><small>No expenses yet.</small></p>";
             } else {
                 html += filteredExpenses.map(e => {
                     const isPayer = e.paid_by_id === currentProfile.id;
-                    const payerName = isPayer ? "You" : (uMap[e.paid_by_id] || 'Unknown');
-                    
-                    // Find my specific share for this expense
-                    const myShareEntry = shares.find(s => s.expense_id === e.id && s.user_id === currentProfile.id);
+                    const myShareEntry = (shares || []).find(s => s.expense_id === e.id && s.user_id === currentProfile.id);
                     const myShareAmt = myShareEntry ? parseFloat(myShareEntry.share_amount).toFixed(2) : "0.00";
 
-                    // Determine the "Owe" text
-                    let shareText = "";
-                    if (isPayer) {
-                        shareText = `<span style="color:var(--accent)"> (Your share: ₹${myShareAmt})</span>`;
-                    } else {
-                        shareText = `<span style="color:var(--danger)"> (You owe: ₹${myShareAmt})</span>`;
-                    }
+                    const controls = isPayer ? `
+                        <div style="margin-top: 8px; display: flex; gap: 8px;">
+                            <button class="btn-small" onclick="prepEdit('${e.id}')">Edit</button>
+                            <button class="btn-small" style="background:var(--danger); color:white" onclick="deleteExpense('${e.id}')">Delete</button>
+                        </div>
+                    ` : "";
 
                     return `
-                        <div class="log-item">
-                            <strong>${payerName}</strong> paid <strong>₹${parseFloat(e.total_amount).toFixed(2)}</strong> for ${e.description}
-                            ${shareText}
+                        <div class="log-item" id="exp-${e.id}">
+                            <strong>${isPayer ? "You" : (uMap[e.paid_by_id] || 'User')}</strong> paid <strong>₹${parseFloat(e.total_amount).toFixed(2)}</strong> for ${e.description}
+                            <span style="color:${isPayer ? 'var(--accent)' : 'var(--danger)'}">
+                                (${isPayer ? 'Your share' : 'You owe'}: ₹${myShareAmt})
+                            </span>
+                            ${controls}
                             <span class="timestamp">${new Date(e.created_at).toLocaleString()}</span>
                         </div>`;
                 }).join('');
             }
 
-            html += "<h4 style='margin-top:1.5rem'>Settlements</h4>";
+            // 3. RENDER SETTLEMENTS (The missing piece!)
+            html += "<h4 style='margin-top:2rem'>Settlements</h4>";
             
             if (filteredSettlements.length === 0) {
-                html += "<p><small>No settlements found.</small></p>";
+                html += "<p><small>No settlements yet.</small></p>";
             } else {
                 html += filteredSettlements.map(s => {
                     const isIpaid = s.payer_id === currentProfile.id;
-                    const action = isIpaid ? `You paid <strong>${uMap[s.payee_id]}</strong>` : `<strong>${uMap[s.payer_id]}</strong> paid you`;
+                    const otherUser = isIpaid ? (uMap[s.payee_id] || 'User') : (uMap[s.payer_id] || 'User');
+                    const actionText = isIpaid ? `You paid <strong>${otherUser}</strong>` : `<strong>${otherUser}</strong> paid you`;
                     
+                    // Optional: Add a delete button for settlements you created
+                    const settleDelete = isIpaid ? `
+                        <button class="btn-small" style="background:transparent; border:1px solid var(--danger); color:var(--danger); margin-left:10px;" onclick="deleteSettlement('${s.id}')">Delete</button>
+                    ` : "";
+
                     return `
                         <div class="log-item">
-                            ${action}: <strong>₹${parseFloat(s.amount).toFixed(2)}</strong>
+                            ${actionText}: <strong>₹${parseFloat(s.amount).toFixed(2)}</strong>
+                            ${settleDelete}
                             <span class="timestamp">${new Date(s.created_at).toLocaleString()}</span>
                         </div>`;
                 }).join('');
@@ -413,24 +453,118 @@
             historyDiv.innerHTML = html;
         }
 
+        let editingExpenseId = null; // Global tracker
+
+        // --- DELETE ---
+        async function deleteExpense(id) {
+            if (!confirm("Are you sure you want to delete this expense?")) return;
+            
+            // Because of ON DELETE CASCADE in SQL, deleting the expense 
+            // automatically deletes all related shares!
+            const { error } = await supabaseClient.from('expenses').delete().eq('id', id);
+            
+            if (error) alert("Error: " + error.message);
+            loadAppData();
+        }
+
+        async function deleteSettlement(id) {
+            if (!confirm("Remove this settlement record?")) return;
+            const { error } = await supabaseClient.from('settlements').delete().eq('id', id);
+            if (error) alert(error.message);
+            loadAppData();
+        }
+
+        // --- EDIT PREP ---
+        async function prepEdit(id) {
+            editingExpenseId = id;
+            
+            // 1. Fetch this specific expense and its shares
+            const { data: exp } = await supabaseClient.from('expenses').select('*').eq('id', id).single();
+            const { data: shares } = await supabaseClient.from('expense_shares').select('*').eq('expense_id', id);
+
+            // 2. Fill the form
+            document.getElementById('expense-desc').value = exp.description;
+            document.getElementById('expense-total-input').value = exp.total_amount;
+            document.getElementById('expense-payer-select').value = exp.paid_by_id;
+
+            // 3. Update the checkboxes and amounts
+            const checks = document.querySelectorAll('.user-check');
+            const amounts = document.querySelectorAll('.user-amount');
+
+            checks.forEach((cb, i) => {
+                const userShare = shares.find(s => s.user_id === cb.dataset.id);
+                if (userShare) {
+                    cb.checked = true;
+                    amounts[i].value = userShare.share_amount;
+                } else {
+                    cb.checked = false;
+                    amounts[i].value = "";
+                }
+            });
+
+            // 4. Change the button text and scroll up
+            const mainBtn = document.querySelector('button[onclick="addExpense()"]');
+            mainBtn.innerText = "Update Expense";
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
         async function addExpense() {
-            const desc = document.getElementById('expense-desc').value;
-            const total = parseFloat(document.getElementById('expense-total-input').value) || 0;
+            const desc = document.getElementById('expense-desc').value.trim();
+            const totalInput = parseFloat(document.getElementById('expense-total-input').value) || 0;
             const payerId = document.getElementById('expense-payer-select').value;
+            
             let shares = [];
+            let sharesSum = 0;
 
             document.querySelectorAll('.user-check').forEach((cb, i) => {
                 if (cb.checked) {
                     const amt = parseFloat(document.querySelectorAll('.user-amount')[i].value) || 0;
                     shares.push({ user_id: cb.dataset.id, share_amount: amt });
+                    sharesSum += amt;
                 }
             });
 
+            // --- VALIDATION LOGIC ---
+            if (!desc) return alert("Please enter a description.");
+            if (shares.length === 0) return alert("Please select at least one person for the split.");
+            
+            // Check if the sum of shares matches the total (allowing for tiny 0.01 rounding errors)
+            const difference = Math.abs(totalInput - sharesSum);
+            if (difference > 0.01) {
+                return alert(`Math error! Total is ₹${totalInput.toFixed(2)} but individual shares add up to ₹${sharesSum.toFixed(2)}. Please adjust.`);
+            }
+
             if (!desc || shares.length === 0 || total <= 0) return alert("Fill details.");
-            
-            const { data: exp } = await supabaseClient.from('expenses').insert([{ description: desc, total_amount: total, paid_by_id: payerId }]).select();
-            await supabaseClient.from('expense_shares').insert(shares.map(s => ({ ...s, expense_id: exp[0].id })));
-            
+
+            if (editingExpenseId) {
+                // --- UPDATE MODE ---
+                // 1. Update the main expense
+                await supabaseClient.from('expenses').update({ 
+                    description: desc, 
+                    total_amount: total, 
+                    paid_by_id: payerId 
+                }).eq('id', editingExpenseId);
+
+                // 2. Delete old shares and insert new ones
+                await supabaseClient.from('expense_shares').delete().eq('expense_id', editingExpenseId);
+                await supabaseClient.from('expense_shares').insert(
+                    shares.map(s => ({ ...s, expense_id: editingExpenseId }))
+                );
+
+                // Reset UI
+                editingExpenseId = null;
+                document.querySelector('button[onclick="addExpense()"]').innerText = "Save Expense";
+            } else {
+                // --- NEW MODE ---
+                const { data: exp } = await supabaseClient.from('expenses').insert([{ 
+                    description: desc, total_amount: total, paid_by_id: payerId 
+                }]).select();
+                await supabaseClient.from('expense_shares').insert(
+                    shares.map(s => ({ ...s, expense_id: exp[0].id }))
+                );
+            }
+
+            // Reset Form
             document.getElementById('expense-desc').value = '';
             document.getElementById('expense-total-input').value = '';
             loadAppData();

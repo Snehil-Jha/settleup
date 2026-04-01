@@ -55,7 +55,7 @@
         <div class="card">
             <h3>Settle Up</h3>
             <select id="settle-to"></select>
-            <input type="number" id="settle-amount" placeholder="Amount ($)">
+            <input type="number" id="settle-amount" placeholder="Amount (₹)">
             <button onclick="settleUp()">Pay Friend</button>
         </div>
 
@@ -185,7 +185,7 @@
             settleSelect.innerHTML = '';
             users.forEach(u => {
                 if(u.id !== currentUser.id) {
-                    settleSelect.innerHTML += `<option value="${u.id}">${u.username}</option>`;
+                    settleSelect.innerHTML += `<option value="₹{u.id}">${u.username}</option>`;
                 }
             });
 
@@ -199,7 +199,7 @@
                             <input type="checkbox" class="user-check" data-id="${u.id}" checked>
                             ${u.username}
                         </label>
-                        <input type="number" class="user-amount" data-id="${u.id}" placeholder="Owes ($)" step="0.01">
+                        <input type="number" class="user-amount" data-id="${u.id}" placeholder="Owes (₹)" step="0.01">
                     </div>
                 `;
             });
@@ -235,7 +235,7 @@
             users.forEach(u => {
                 let bal = balances[u.id].toFixed(2);
                 let color = bal >= 0 ? 'green' : 'red';
-                let text = bal >= 0 ? `is owed $${bal}` : `owes $${Math.abs(bal)}`;
+                let text = bal >= 0 ? `is owed ₹${bal}` : `owes ₹${Math.abs(bal)}`;
                 balDiv.innerHTML += `<p><strong>${u.username}</strong> <span style="color:${color}">${text}</span></p>`;
             });
         }
@@ -254,7 +254,7 @@
                 const date = new Date(exp.created_at).toLocaleString();
                 historyHTML += `
                     <div class="log-item">
-                        <strong>${userMap[exp.paid_by_id]}</strong> paid <strong>$${parseFloat(exp.total_amount).toFixed(2)}</strong> for "${exp.description}".<br>
+                        <strong>${userMap[exp.paid_by_id]}</strong> paid <strong>₹${parseFloat(exp.total_amount).toFixed(2)}</strong> for "${exp.description}".<br>
                         <span class="timestamp">${date}</span>
                     </div>`;
             });
@@ -266,7 +266,7 @@
                 const date = new Date(set.created_at).toLocaleString();
                 historyHTML += `
                     <div class="log-item">
-                        <strong>${userMap[set.payer_id]}</strong> paid <strong>$${parseFloat(set.amount).toFixed(2)}</strong> to <strong>${userMap[set.payee_id]}</strong>.<br>
+                        <strong>${userMap[set.payer_id]}</strong> paid <strong>₹${parseFloat(set.amount).toFixed(2)}</strong> to <strong>${userMap[set.payee_id]}</strong>.<br>
                         <span class="timestamp">${date}</span>
                     </div>`;
             });

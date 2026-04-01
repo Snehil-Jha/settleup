@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Friend Split (Personal Balances)</title>
+    <title>Settle Up</title>
     <style>
         :root {
             --bg: #121212;
@@ -89,7 +89,7 @@
     </style>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
-<body>
+<body onload="checkSavedUser()">
 
     <div id="login-screen" class="card">
         <h2 id="auth-title">Who are you?</h2>
@@ -116,12 +116,10 @@
             <h3>Add Expense</h3>
             <input type="text" id="expense-desc" placeholder="What was it for?">
             <input type="number" id="expense-total-input" placeholder="Total Amount (₹)" step="0.01">
-            
             <div class="split-header">
                 <p style="margin:0;"><strong>Split details:</strong></p>
                 <button onclick="autoSplit()" class="btn-small">Split Evenly</button>
             </div>
-            
             <div id="participants-list"></div>
             <button onclick="addExpense()" style="margin-top: 1rem;">Save Expense</button>
         </div>
@@ -149,6 +147,15 @@
         let allUsers = [];
         let isLoginMode = true;
 
+        // --- NEW: Check for saved session on load ---
+        function checkSavedUser() {
+            const saved = localStorage.getItem('split_app_user');
+            if (saved) {
+                currentUser = JSON.parse(saved);
+                enterApp(false); // don't re-save to localstorage since it's already there
+            }
+        }
+
         function toggleAuthMode() {
             isLoginMode = !isLoginMode;
             document.getElementById('auth-title').innerText = isLoginMode ? "Who are you?" : "Create Account";
@@ -162,7 +169,12 @@
             const u = document.getElementById('username').value.trim();
             const p = document.getElementById('password').value.trim();
             const { data: users } = await supabaseClient.from('users').select('*').eq('username', u).eq('password', p);
-            if (users?.length > 0) { currentUser = users[0]; enterApp(); } else { alert("Invalid credentials."); }
+            if (users?.length > 0) { 
+                currentUser = users[0]; 
+                enterApp(true); 
+            } else { 
+                alert("Invalid credentials."); 
+            }
         }
 
         async function signUp() {
@@ -173,17 +185,23 @@
             if (existing?.length > 0) return alert("Username taken.");
             const { data: newUser } = await supabaseClient.from('users').insert([{ username: u, password: p }]).select();
             currentUser = newUser[0];
-            enterApp();
+            enterApp(true);
         }
 
-        function enterApp() {
+        function enterApp(shouldSave) {
+            if (shouldSave) {
+                localStorage.setItem('split_app_user', JSON.stringify(currentUser));
+            }
             document.getElementById('current-user-display').innerText = currentUser.username;
             document.getElementById('login-screen').classList.add('hidden');
             document.getElementById('app-screen').classList.remove('hidden');
             loadAppData();
         }
 
-        function logout() { location.reload(); }
+        function logout() { 
+            localStorage.removeItem('split_app_user');
+            location.reload(); 
+        }
 
         async function loadAppData() {
             const { data: users } = await supabaseClient.from('users').select('*');
@@ -222,53 +240,28 @@
             });
         }
 
-        // Updated logic: Calculate personal net balances against each user
         function calculateBalances(users, expenses, shares, settlements) {
-            let userBalances = {}; // Maps other user IDs to their balance relative to current user
-            
-            users.forEach(u => {
-                if (u.id !== currentUser.id) userBalances[u.id] = 0;
-            });
+            let userBalances = {};
+            users.forEach(u => { if (u.id !== currentUser.id) userBalances[u.id] = 0; });
 
-            // 1. Process Expense Shares
-            // We only care about expenses where the currentUser paid or the currentUser is a participant
             expenses.forEach(exp => {
                 const expShares = shares.filter(s => s.expense_id === exp.id);
-                
                 if (exp.paid_by_id === currentUser.id) {
-                    // Everyone else owes the current user their share
-                    expShares.forEach(s => {
-                        if (s.user_id !== currentUser.id) {
-                            userBalances[s.user_id] += parseFloat(s.share_amount);
-                        }
-                    });
+                    expShares.forEach(s => { if (s.user_id !== currentUser.id) userBalances[s.user_id] += parseFloat(s.share_amount); });
                 } else {
-                    // Current user owes the payer their specific share
                     const myShare = expShares.find(s => s.user_id === currentUser.id);
-                    if (myShare) {
-                        userBalances[exp.paid_by_id] -= parseFloat(myShare.share_amount);
-                    }
+                    if (myShare) userBalances[exp.paid_by_id] -= parseFloat(myShare.share_amount);
                 }
             });
 
-            // 2. Process Settlements
             settlements.forEach(set => {
-                if (set.payer_id === currentUser.id) {
-                    // Current user paid someone else, reducing debt or increasing credit
-                    userBalances[set.payee_id] += parseFloat(set.amount);
-                } else if (set.payee_id === currentUser.id) {
-                    // Someone else paid the current user, reducing credit or increasing debt
-                    userBalances[set.payer_id] -= parseFloat(set.amount);
-                }
+                if (set.payer_id === currentUser.id) userBalances[set.payee_id] += parseFloat(set.amount);
+                else if (set.payee_id === currentUser.id) userBalances[set.payer_id] -= parseFloat(set.amount);
             });
 
             const balDiv = document.getElementById('balances-list');
             const otherUsers = users.filter(u => u.id !== currentUser.id);
-            
-            if (otherUsers.length === 0) {
-                balDiv.innerHTML = "<p><small>No other users found.</small></p>";
-                return;
-            }
+            if (otherUsers.length === 0) { balDiv.innerHTML = "<p><small>Waiting for friends to join...</small></p>"; return; }
 
             balDiv.innerHTML = otherUsers.map(u => {
                 const b = userBalances[u.id].toFixed(2);
@@ -281,29 +274,20 @@
         function renderHistory(users, expenses, shares, settlements) {
             const uMap = Object.fromEntries(users.map(u => [u.id, u.username]));
             const historyDiv = document.getElementById('history-list');
-            
-            const filteredExpenses = expenses.filter(e => {
-                const isPayer = e.paid_by_id === currentUser.id;
-                const isInvolved = shares.some(s => s.expense_id === e.id && s.user_id === currentUser.id);
-                return isPayer || isInvolved;
-            });
-
-            const filteredSettlements = settlements.filter(s => 
-                s.payer_id === currentUser.id || s.payee_id === currentUser.id
-            );
+            const filteredExpenses = expenses.filter(e => e.paid_by_id === currentUser.id || shares.some(s => s.expense_id === e.id && s.user_id === currentUser.id));
+            const filteredSettlements = settlements.filter(s => s.payer_id === currentUser.id || s.payee_id === currentUser.id);
             
             let html = "<h4>Your Expenses</h4>" + (filteredExpenses.length ? filteredExpenses.map(e => `
                 <div class="log-item">
                     <strong>${uMap[e.paid_by_id]}</strong> paid <strong>₹${parseFloat(e.total_amount).toFixed(2)}</strong> for ${e.description}
                     <span class="timestamp">${new Date(e.created_at).toLocaleString()}</span>
-                </div>`).join('') : "<p><small>No recent activity involving you.</small></p>");
+                </div>`).join('') : "<p><small>None</small></p>");
 
             html += "<h4 style='margin-top:1rem'>Your Settlements</h4>" + (filteredSettlements.length ? filteredSettlements.map(s => `
                 <div class="log-item">
                     <strong>${uMap[s.payer_id]}</strong> → <strong>${uMap[s.payee_id]}</strong>: ₹${parseFloat(s.amount).toFixed(2)}
                     <span class="timestamp">${new Date(s.created_at).toLocaleString()}</span>
-                </div>`).join('') : "<p><small>No settlements found.</small></p>");
-
+                </div>`).join('') : "<p><small>None</small></p>");
             historyDiv.innerHTML = html;
         }
 
@@ -311,19 +295,15 @@
             const desc = document.getElementById('expense-desc').value;
             const total = parseFloat(document.getElementById('expense-total-input').value) || 0;
             let shares = [];
-
             document.querySelectorAll('.user-check').forEach((cb, i) => {
                 if (cb.checked) {
                     const amt = parseFloat(document.querySelectorAll('.user-amount')[i].value) || 0;
                     shares.push({ user_id: cb.dataset.id, share_amount: amt });
                 }
             });
-
             if (!desc || shares.length === 0) return alert("Fill details.");
-            
             const { data: exp } = await supabaseClient.from('expenses').insert([{ description: desc, total_amount: total, paid_by_id: currentUser.id }]).select();
             await supabaseClient.from('expense_shares').insert(shares.map(s => ({ ...s, expense_id: exp[0].id })));
-            
             document.getElementById('expense-desc').value = '';
             document.getElementById('expense-total-input').value = '';
             loadAppData();

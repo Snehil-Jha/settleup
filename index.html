@@ -174,6 +174,15 @@
             <h3>📜 Your History</h3>
             <div id="history-list">Loading...</div>
         </div>
+
+        <div class="card">
+            <h3>Profile Settings</h3>
+            <label class="field-label">Rename Account</label>
+            <div style="display: flex; gap: 8px; align-items: center;">
+                <input type="text" id="new-username-input" placeholder="New display name" style="margin:0;">
+                <button onclick="renameUser()" class="btn-small" style="width: 100px;">Update</button>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -554,14 +563,21 @@
             } else {
                 // --- NEW MODE ---
                 // Changed 'total' to 'totalInput' below
-                const { data: exp } = await supabaseClient.from('expenses').insert([{ 
+                // Inside the 'NEW MODE' section of addExpense()
+                const { data: exp, error: expError } = await supabaseClient.from('expenses').insert([{ 
                     description: desc, total_amount: totalInput, paid_by_id: payerId 
                 }]).select();
-                
+
+                if (expError) {
+                    console.error("Expense Insert Error:", expError);
+                    return alert("Database Error: " + expError.message);
+                }
+
                 if (exp && exp[0]) {
-                    await supabaseClient.from('expense_shares').insert(
+                    const { error: shareError } = await supabaseClient.from('expense_shares').insert(
                         shares.map(s => ({ ...s, expense_id: exp[0].id }))
                     );
+                    if (shareError) console.error("Shares Insert Error:", shareError);
                 }
             }
 
@@ -581,6 +597,36 @@
             await supabaseClient.from('settlements').insert([{ payer_id: currentProfile.id, payee_id: to, amount: amt }]);
             document.getElementById('settle-amount').value = '';
             loadAppData();
+        }
+
+
+        async function renameUser() {
+            const newName = document.getElementById('new-username-input').value.trim();
+            
+            if (!newName) return alert("Please enter a name.");
+            if (newName === currentProfile.username) return alert("That is already your name!");
+
+            // 1. Update the 'profiles' table in Supabase
+            const { error } = await supabaseClient
+                .from('profiles')
+                .update({ username: newName })
+                .eq('id', currentProfile.id);
+
+            if (error) {
+                return alert("Error updating name: " + error.message);
+            }
+
+            // 2. Update the local session data
+            currentProfile.username = newName;
+            
+            // 3. Refresh the UI
+            document.getElementById('current-user-display').innerText = newName;
+            document.getElementById('new-username-input').value = '';
+            
+            // 4. Reload all data to update names in history and dropdowns
+            loadAppData();
+            
+            alert("Name updated successfully!");
         }
     </script>
 </body>

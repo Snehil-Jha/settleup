@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Settle Up</title>
+    <title>Friend Split | Pro</title>
     <style>
         :root {
             --bg: #121212;
@@ -61,7 +61,6 @@
         button:hover { opacity: 0.9; }
 
         .btn-small { padding: 4px 8px; width: auto; font-size: 0.8rem; margin: 0; }
-
         .hidden { display: none; }
 
         .participant-row { 
@@ -76,26 +75,42 @@
         .participant-row input[type="number"] { width: 90px; margin: 0; }
         .participant-row input[type="checkbox"] { width: auto; transform: scale(1.2); }
 
-        .log-item { border-bottom: 1px solid var(--border); padding: 10px 0; font-size: 0.9rem; line-height: 1.4; }
+        .log-item { border-bottom: 1px solid var(--border); padding: 10px 0; font-size: 0.85rem; line-height: 1.4; }
         .log-item:last-child { border-bottom: none; }
-        .timestamp { color: var(--text-dim); font-size: 0.75rem; display: block; margin-top: 4px; }
+        .timestamp { color: var(--text-dim); font-size: 0.7rem; display: block; margin-top: 4px; }
 
         .toggle-text { text-align: center; font-size: 0.9rem; margin-top: 15px; color: var(--text-dim); }
         .toggle-text span { color: var(--accent); cursor: pointer; text-decoration: underline; }
 
         .split-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        label { font-size: 0.8rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
         
-        label { font-size: 0.9rem; color: var(--text-dim); }
+        .alert { padding: 10px; border-radius: 6px; font-size: 0.85rem; margin-bottom: 1rem; text-align: center; }
+        .alert-info { background: rgba(0, 229, 209, 0.1); color: var(--accent); border: 1px solid var(--accent); }
     </style>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
-<body onload="checkSavedUser()">
+<body onload="checkUserSession()">
 
     <div id="login-screen" class="card">
-        <h2 id="auth-title">Who are you?</h2>
-        <input type="text" id="username" placeholder="Username">
-        <input type="password" id="password" placeholder="Password">
-        <button id="auth-btn" onclick="handleAuth()">Login</button>
+        <h2 id="auth-title">Welcome</h2>
+        
+        <form id="auth-form" onsubmit="event.preventDefault(); handleAuth();">
+            
+            <div id="signup-fields" class="hidden">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" placeholder="How friends see you" autocomplete="username">
+            </div>
+
+            <label for="email">Email Address</label>
+            <input type="email" id="email" name="email" placeholder="you@example.com" required autocomplete="email">
+            
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" placeholder="••••••••" required autocomplete="current-password">
+            
+            <button type="submit" id="auth-btn">Login</button>
+        </form>
+
         <div class="toggle-text">
             <span id="toggle-auth-link" onclick="toggleAuthMode()">Need an account? Sign up</span>
         </div>
@@ -103,7 +118,7 @@
 
     <div id="app-screen" class="hidden">
         <div class="card" style="display: flex; justify-content: space-between; align-items: center;">
-            <h2 style="margin:0; font-size: 1.2rem;">Hi, <span id="current-user-display"></span>!</h2>
+            <h2 style="margin:0; font-size: 1.1rem;">Hi, <span id="current-user-display"></span>!</h2>
             <button onclick="logout()" class="btn-small" style="background:var(--danger); color: white;">Logout</button>
         </div>
 
@@ -114,8 +129,8 @@
 
         <div class="card">
             <h3>Add Expense</h3>
-            <label>What was it for?</label>
-            <input type="text" id="expense-desc" placeholder="e.g. Dinner, Rent">
+            <label>Description</label>
+            <input type="text" id="expense-desc" placeholder="Dinner, Movie, etc.">
             
             <label>Who paid?</label>
             <select id="expense-payer-select"></select>
@@ -124,7 +139,7 @@
             <input type="number" id="expense-total-input" placeholder="0.00" step="0.01">
             
             <div class="split-header">
-                <p style="margin:0; font-weight: bold; color: var(--text);">Split details:</p>
+                <p style="margin:0; font-weight: bold; font-size: 0.9rem;">Split details:</p>
                 <button onclick="autoSplit()" class="btn-small">Split Evenly</button>
             </div>
             
@@ -152,140 +167,205 @@
         
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-        let currentUser = null;
-        let allUsers = [];
+        let currentProfile = null;
         let isLoginMode = true;
 
-        function checkSavedUser() {
-            const saved = localStorage.getItem('split_app_user');
-            if (saved) { currentUser = JSON.parse(saved); enterApp(false); }
+        // --- AUTH LOGIC ---
+
+        async function checkUserSession() {
+            const { data: { session } } = await supabaseClient.auth.getSession();
+            if (session) {
+                const { data, error } = await supabaseClient.from('profiles').select('*').eq('id', session.user.id).single();
+                if (data) {
+                    currentProfile = data;
+                    enterApp();
+                } else {
+                    // Profile might not exist yet if signup was interrupted
+                    await logout();
+                }
+            }
         }
 
         function toggleAuthMode() {
             isLoginMode = !isLoginMode;
-            document.getElementById('auth-title').innerText = isLoginMode ? "Who are you?" : "Create Account";
-            document.getElementById('auth-btn').innerText = isLoginMode ? "Login" : "Sign Up";
+            const pwdInput = document.getElementById('password');
+            const authBtn = document.getElementById('auth-btn');
+
+            document.getElementById('auth-title').innerText = isLoginMode ? "Welcome" : "Create Account";
+            authBtn.innerText = isLoginMode ? "Login" : "Sign Up";
             document.getElementById('toggle-auth-link').innerText = isLoginMode ? "Need an account? Sign up" : "Have an account? Login";
+            document.getElementById('signup-fields').classList.toggle('hidden', isLoginMode);
+
+            // Switch hints so the browser knows when to suggest a NEW password vs autofill OLD one
+            pwdInput.setAttribute('autocomplete', isLoginMode ? 'current-password' : 'new-password');
         }
 
         function handleAuth() { isLoginMode ? login() : signUp(); }
 
         async function login() {
-            const u = document.getElementById('username').value.trim();
-            const p = document.getElementById('password').value.trim();
-            const { data: users } = await supabaseClient.from('users').select('*').eq('username', u).eq('password', p);
-            if (users?.length > 0) { currentUser = users[0]; enterApp(true); } else { alert("Invalid credentials."); }
+            const email = document.getElementById('email').value.trim();
+            const password = document.getElementById('password').value;
+            if(!email || !password) return alert("Fill all fields");
+
+            const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+            if (error) return alert(error.message);
+            
+            const { data: prof } = await supabaseClient.from('profiles').select('*').eq('id', data.user.id).single();
+            currentProfile = prof;
+            enterApp();
         }
 
         async function signUp() {
-            const u = document.getElementById('username').value.trim();
-            const p = document.getElementById('password').value.trim();
-            if (!u || !p) return alert("Fill all fields.");
-            const { data: existing } = await supabaseClient.from('users').select('*').eq('username', u);
-            if (existing?.length > 0) return alert("Username taken.");
-            const { data: newUser } = await supabaseClient.from('users').insert([{ username: u, password: p }]).select();
-            currentUser = newUser[0];
-            enterApp(true);
+            const email = document.getElementById('email').value.trim();
+            const password = document.getElementById('password').value;
+            const username = document.getElementById('username').value.trim();
+            
+            if (!email || !password || !username) return alert("Fill all fields.");
+
+            const { data, error } = await supabaseClient.auth.signUp({ email, password });
+            if (error) return alert(error.message);
+
+            // Create the profile entry
+            const { error: profError } = await supabaseClient.from('profiles').upsert([
+                { id: data.user.id, username: username }
+            ], { onConflict: 'id' }); // This prevents the duplicate key error
+
+            if (profError) return alert("Profile error: " + profError.message);
+
+            // If "Confirm Email" is ON in Supabase, the user won't have a session yet
+            if (!data.session) {
+                alert("Signup successful! Please check your email for a confirmation link.");
+                location.reload();
+            } else {
+                currentProfile = { id: data.user.id, username: username };
+                enterApp();
+            }
         }
 
-        function enterApp(shouldSave) {
-            if (shouldSave) localStorage.setItem('split_app_user', JSON.stringify(currentUser));
-            document.getElementById('current-user-display').innerText = currentUser.username;
+        function enterApp() {
+            document.getElementById('current-user-display').innerText = currentProfile.username;
             document.getElementById('login-screen').classList.add('hidden');
             document.getElementById('app-screen').classList.remove('hidden');
             loadAppData();
         }
 
-        function logout() { localStorage.removeItem('split_app_user'); location.reload(); }
+        async function logout() { 
+            await supabaseClient.auth.signOut();
+            location.reload(); 
+        }
+
+        // --- APP LOGIC (Balances, Fetching, Adding) ---
 
         async function loadAppData() {
-            const { data: users } = await supabaseClient.from('users').select('*');
-            allUsers = users;
+            try {
+                // 1. Fetch Profiles
+                const { data: profiles, error: profError } = await supabaseClient.from('profiles').select('*');
+                if (profError) throw profError;
+                
+                const safeProfiles = profiles || [];
 
-            // Payer Select in Add Expense
-            const payerSelect = document.getElementById('expense-payer-select');
-            payerSelect.innerHTML = users.map(u => `<option value="${u.id}" ${u.id === currentUser.id ? 'selected' : ''}>${u.username === currentUser.username ? 'You' : u.username}</option>`).join('');
+                // 2. Populate Dropdowns (Check if elements exist first)
+                const payerSelect = document.getElementById('expense-payer-select');
+                if (payerSelect) {
+                    payerSelect.innerHTML = safeProfiles.map(p => 
+                        `<option value="${p.id}" ${p.id === currentProfile.id ? 'selected' : ''}>${p.id === currentProfile.id ? 'You' : p.username}</option>`
+                    ).join('');
+                }
 
-            // Settle Select
-            const settleSelect = document.getElementById('settle-to');
-            settleSelect.innerHTML = users.filter(u => u.id !== currentUser.id).map(u => `<option value="${u.id}">${u.username}</option>`).join('');
+                const settleSelect = document.getElementById('settle-to');
+                if (settleSelect) {
+                    settleSelect.innerHTML = safeProfiles.filter(p => p.id !== currentProfile.id).map(p => 
+                        `<option value="${p.id}">${p.username}</option>`
+                    ).join('');
+                }
 
-            // Participants Checklist
-            const partDiv = document.getElementById('participants-list');
-            partDiv.innerHTML = users.map(u => `
-                <div class="participant-row">
-                    <label style="color:var(--text)"><input type="checkbox" class="user-check" data-id="${u.id}" checked> ${u.username}</label>
-                    <input type="number" class="user-amount" data-id="${u.id}" placeholder="0.00" step="0.01">
-                </div>
-            `).join('');
+                // 3. Populate Split List
+                const partList = document.getElementById('participants-list');
+                if (partList) {
+                    partList.innerHTML = safeProfiles.map(p => `
+                        <div class="participant-row">
+                            <label style="color:var(--text)"><input type="checkbox" class="user-check" data-id="${p.id}" checked> ${p.username}</label>
+                            <input type="number" class="user-amount" data-id="${p.id}" placeholder="0.00" step="0.01">
+                        </div>
+                    `).join('');
+                }
 
-            const { data: expenses } = await supabaseClient.from('expenses').select('*').order('created_at', { ascending: false });
-            const { data: shares } = await supabaseClient.from('expense_shares').select('*');
-            const { data: settlements } = await supabaseClient.from('settlements').select('*').order('created_at', { ascending: false });
+                // 4. Fetch the rest of the data
+                const { data: expenses } = await supabaseClient.from('expenses').select('*').order('created_at', { ascending: false });
+                const { data: shares } = await supabaseClient.from('expense_shares').select('*');
+                const { data: settlements } = await supabaseClient.from('settlements').select('*').order('created_at', { ascending: false });
 
-            calculateBalances(users, expenses, shares, settlements);
-            renderHistory(users, expenses, shares, settlements);
+                // Fallback to empty arrays so .forEach or .filter doesn't crash on 'null'
+                const safeExpenses = expenses || [];
+                const safeShares = shares || [];
+                const safeSettlements = settlements || [];
+
+                // 5. Calculate and Render
+                calculateBalances(safeProfiles, safeExpenses, safeShares, safeSettlements);
+                renderHistory(safeProfiles, safeExpenses, safeShares, safeSettlements);
+
+            } catch (error) {
+                console.error("Error loading app data:", error);
+                document.getElementById('balances-list').innerHTML = "<p style='color:var(--danger); font-size: 0.8rem;'>Failed to load balances. Check console.</p>";
+                document.getElementById('history-list').innerHTML = "<p style='color:var(--danger); font-size: 0.8rem;'>Failed to load history. Check console.</p>";
+            }
         }
 
         function autoSplit() {
             const total = parseFloat(document.getElementById('expense-total-input').value) || 0;
-            const checkBoxes = document.querySelectorAll('.user-check');
-            const amountInputs = document.querySelectorAll('.user-amount');
-            const selectedCount = Array.from(checkBoxes).filter(cb => cb.checked).length;
-            if (selectedCount === 0 || total === 0) return;
-            const share = (total / selectedCount).toFixed(2);
-            checkBoxes.forEach((cb, i) => { amountInputs[i].value = cb.checked ? share : ""; });
+            const checks = document.querySelectorAll('.user-check');
+            const inputs = document.querySelectorAll('.user-amount');
+            const count = Array.from(checks).filter(c => c.checked).length;
+            if (count === 0 || total === 0) return;
+            const share = (total / count).toFixed(2);
+            checks.forEach((c, i) => { inputs[i].value = c.checked ? share : ""; });
         }
 
-        function calculateBalances(users, expenses, shares, settlements) {
-            let userBalances = {};
-            users.forEach(u => { if (u.id !== currentUser.id) userBalances[u.id] = 0; });
+        function calculateBalances(profiles, expenses, shares, settlements) {
+            let balances = {};
+            profiles.forEach(p => { if (p.id !== currentProfile.id) balances[p.id] = 0; });
 
             expenses.forEach(exp => {
                 const expShares = shares.filter(s => s.expense_id === exp.id);
-                if (exp.paid_by_id === currentUser.id) {
-                    expShares.forEach(s => { if (s.user_id !== currentUser.id) userBalances[s.user_id] += parseFloat(s.share_amount); });
+                if (exp.paid_by_id === currentProfile.id) {
+                    expShares.forEach(s => { if (s.user_id !== currentProfile.id) balances[s.user_id] += parseFloat(s.share_amount); });
                 } else {
-                    const myShare = expShares.find(s => s.user_id === currentUser.id);
-                    if (myShare) userBalances[exp.paid_by_id] -= parseFloat(myShare.share_amount);
+                    const myShare = expShares.find(s => s.user_id === currentProfile.id);
+                    if (myShare) balances[exp.paid_by_id] -= parseFloat(myShare.share_amount);
                 }
             });
 
             settlements.forEach(set => {
-                if (set.payer_id === currentUser.id) userBalances[set.payee_id] += parseFloat(set.amount);
-                else if (set.payee_id === currentUser.id) userBalances[set.payer_id] -= parseFloat(set.amount);
+                if (set.payer_id === currentProfile.id) balances[set.payee_id] += parseFloat(set.amount);
+                else if (set.payee_id === currentProfile.id) balances[set.payer_id] -= parseFloat(set.amount);
             });
 
-            const balDiv = document.getElementById('balances-list');
-            const otherUsers = users.filter(u => u.id !== currentUser.id);
-            if (otherUsers.length === 0) { balDiv.innerHTML = "<p><small>Invite friends to start splitting!</small></p>"; return; }
-
-            balDiv.innerHTML = otherUsers.map(u => {
-                const b = userBalances[u.id].toFixed(2);
+            const otherProfiles = profiles.filter(p => p.id !== currentProfile.id);
+            document.getElementById('balances-list').innerHTML = otherProfiles.length ? otherProfiles.map(p => {
+                const b = balances[p.id].toFixed(2);
                 const color = b >= 0 ? 'var(--accent)' : 'var(--danger)';
                 const status = b >= 0 ? 'owes you' : 'you owe';
-                return `<p><strong>${u.username}:</strong> <span style="color:${color}">${status} ₹${Math.abs(b)}</span></p>`;
-            }).join('');
+                return `<p><strong>${p.username}:</strong> <span style="color:${color}">${status} ₹${Math.abs(b)}</span></p>`;
+            }).join('') : "<p><small>Waiting for friends to join...</small></p>";
         }
 
-        function renderHistory(users, expenses, shares, settlements) {
-            const uMap = Object.fromEntries(users.map(u => [u.id, u.username]));
-            const historyDiv = document.getElementById('history-list');
-            const filteredExpenses = expenses.filter(e => e.paid_by_id === currentUser.id || shares.some(s => s.expense_id === e.id && s.user_id === currentUser.id));
-            const filteredSettlements = settlements.filter(s => s.payer_id === currentUser.id || s.payee_id === currentUser.id);
+        function renderHistory(profiles, expenses, shares, settlements) {
+            const uMap = Object.fromEntries(profiles.map(p => [p.id, p.username]));
+            const filteredExpenses = expenses.filter(e => e.paid_by_id === currentProfile.id || shares.some(s => s.expense_id === e.id && s.user_id === currentProfile.id));
+            const filteredSettlements = settlements.filter(s => s.payer_id === currentProfile.id || s.payee_id === currentProfile.id);
             
-            let html = "<h4>Your Expenses</h4>" + (filteredExpenses.length ? filteredExpenses.map(e => `
+            let html = "<h4>Expenses</h4>" + (filteredExpenses.length ? filteredExpenses.map(e => `
                 <div class="log-item">
-                    <strong>${uMap[e.paid_by_id]}</strong> paid <strong>₹${parseFloat(e.total_amount).toFixed(2)}</strong> for ${e.description}
+                    <strong>${uMap[e.paid_by_id] || 'User'}</strong> paid <strong>₹${parseFloat(e.total_amount).toFixed(2)}</strong> for ${e.description}
                     <span class="timestamp">${new Date(e.created_at).toLocaleString()}</span>
-                </div>`).join('') : "<p><small>No recent activity.</small></p>");
+                </div>`).join('') : "<p><small>None</small></p>");
 
-            html += "<h4 style='margin-top:1rem'>Your Settlements</h4>" + (filteredSettlements.length ? filteredSettlements.map(s => `
+            html += "<h4 style='margin-top:1rem'>Settlements</h4>" + (filteredSettlements.length ? filteredSettlements.map(s => `
                 <div class="log-item">
-                    <strong>${uMap[s.payer_id]}</strong> → <strong>${uMap[s.payee_id]}</strong>: ₹${parseFloat(s.amount).toFixed(2)}
+                    <strong>${uMap[s.payer_id] || 'User'}</strong> → <strong>${uMap[s.payee_id] || 'User'}</strong>: ₹${parseFloat(s.amount).toFixed(2)}
                     <span class="timestamp">${new Date(s.created_at).toLocaleString()}</span>
-                </div>`).join('') : "<p><small>No settlements found.</small></p>");
-            historyDiv.innerHTML = html;
+                </div>`).join('') : "<p><small>None</small></p>");
+            document.getElementById('history-list').innerHTML = html;
         }
 
         async function addExpense() {
@@ -301,17 +381,11 @@
                 }
             });
 
-            if (!desc || shares.length === 0 || total <= 0) return alert("Please enter all details.");
+            if (!desc || shares.length === 0 || total <= 0) return alert("Fill details.");
             
-            const { data: exp } = await supabaseClient.from('expenses').insert([{ 
-                description: desc, 
-                total_amount: total, 
-                paid_by_id: payerId 
-            }]).select();
-
+            const { data: exp } = await supabaseClient.from('expenses').insert([{ description: desc, total_amount: total, paid_by_id: payerId }]).select();
             await supabaseClient.from('expense_shares').insert(shares.map(s => ({ ...s, expense_id: exp[0].id })));
             
-            // Reset UI
             document.getElementById('expense-desc').value = '';
             document.getElementById('expense-total-input').value = '';
             loadAppData();
@@ -321,7 +395,7 @@
             const to = document.getElementById('settle-to').value;
             const amt = document.getElementById('settle-amount').value;
             if (!amt || amt <= 0) return;
-            await supabaseClient.from('settlements').insert([{ payer_id: currentUser.id, payee_id: to, amount: amt }]);
+            await supabaseClient.from('settlements').insert([{ payer_id: currentProfile.id, payee_id: to, amount: amt }]);
             document.getElementById('settle-amount').value = '';
             loadAppData();
         }

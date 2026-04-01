@@ -351,21 +351,66 @@
 
         function renderHistory(profiles, expenses, shares, settlements) {
             const uMap = Object.fromEntries(profiles.map(p => [p.id, p.username]));
-            const filteredExpenses = expenses.filter(e => e.paid_by_id === currentProfile.id || shares.some(s => s.expense_id === e.id && s.user_id === currentProfile.id));
-            const filteredSettlements = settlements.filter(s => s.payer_id === currentProfile.id || s.payee_id === currentProfile.id);
-            
-            let html = "<h4>Expenses</h4>" + (filteredExpenses.length ? filteredExpenses.map(e => `
-                <div class="log-item">
-                    <strong>${uMap[e.paid_by_id] || 'User'}</strong> paid <strong>₹${parseFloat(e.total_amount).toFixed(2)}</strong> for ${e.description}
-                    <span class="timestamp">${new Date(e.created_at).toLocaleString()}</span>
-                </div>`).join('') : "<p><small>None</small></p>");
+            const historyDiv = document.getElementById('history-list');
 
-            html += "<h4 style='margin-top:1rem'>Settlements</h4>" + (filteredSettlements.length ? filteredSettlements.map(s => `
-                <div class="log-item">
-                    <strong>${uMap[s.payer_id] || 'User'}</strong> → <strong>${uMap[s.payee_id] || 'User'}</strong>: ₹${parseFloat(s.amount).toFixed(2)}
-                    <span class="timestamp">${new Date(s.created_at).toLocaleString()}</span>
-                </div>`).join('') : "<p><small>None</small></p>");
-            document.getElementById('history-list').innerHTML = html;
+            // Filter for expenses where I am either the payer OR I have a share
+            const filteredExpenses = expenses.filter(e => 
+                e.paid_by_id === currentProfile.id || 
+                shares.some(s => s.expense_id === e.id && s.user_id === currentProfile.id)
+            );
+
+            const filteredSettlements = settlements.filter(s => 
+                s.payer_id === currentProfile.id || s.payee_id === currentProfile.id
+            );
+            
+            let html = "<h4>Expenses</h4>";
+            
+            if (filteredExpenses.length === 0) {
+                html += "<p><small>No recent activity.</small></p>";
+            } else {
+                html += filteredExpenses.map(e => {
+                    const isPayer = e.paid_by_id === currentProfile.id;
+                    const payerName = isPayer ? "You" : (uMap[e.paid_by_id] || 'Unknown');
+                    
+                    // Find my specific share for this expense
+                    const myShareEntry = shares.find(s => s.expense_id === e.id && s.user_id === currentProfile.id);
+                    const myShareAmt = myShareEntry ? parseFloat(myShareEntry.share_amount).toFixed(2) : "0.00";
+
+                    // Determine the "Owe" text
+                    let shareText = "";
+                    if (isPayer) {
+                        shareText = `<span style="color:var(--accent)"> (Your share: ₹${myShareAmt})</span>`;
+                    } else {
+                        shareText = `<span style="color:var(--danger)"> (You owe: ₹${myShareAmt})</span>`;
+                    }
+
+                    return `
+                        <div class="log-item">
+                            <strong>${payerName}</strong> paid <strong>₹${parseFloat(e.total_amount).toFixed(2)}</strong> for ${e.description}
+                            ${shareText}
+                            <span class="timestamp">${new Date(e.created_at).toLocaleString()}</span>
+                        </div>`;
+                }).join('');
+            }
+
+            html += "<h4 style='margin-top:1.5rem'>Settlements</h4>";
+            
+            if (filteredSettlements.length === 0) {
+                html += "<p><small>No settlements found.</small></p>";
+            } else {
+                html += filteredSettlements.map(s => {
+                    const isIpaid = s.payer_id === currentProfile.id;
+                    const action = isIpaid ? `You paid <strong>${uMap[s.payee_id]}</strong>` : `<strong>${uMap[s.payer_id]}</strong> paid you`;
+                    
+                    return `
+                        <div class="log-item">
+                            ${action}: <strong>₹${parseFloat(s.amount).toFixed(2)}</strong>
+                            <span class="timestamp">${new Date(s.created_at).toLocaleString()}</span>
+                        </div>`;
+                }).join('');
+            }
+
+            historyDiv.innerHTML = html;
         }
 
         async function addExpense() {

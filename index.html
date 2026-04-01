@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Friend Split (With Sign Up)</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 500px; margin: 2rem auto; padding: 1rem; background: #f9f9f9; }
+        .card { background: white; padding: 1.5rem; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 1rem; }
+        input, select, button { width: 100%; padding: 0.5rem; margin: 0.5rem 0; box-sizing: border-box; }
+        button { background: #00C4B4; color: white; border: none; cursor: pointer; font-weight: bold; }
+        .hidden { display: none; }
+        .participant-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 5px; }
+        .participant-row input[type="number"] { width: 100px; margin: 0; }
+        .participant-row input[type="checkbox"] { width: auto; }
+        .log-item { border-bottom: 1px solid #eee; padding: 8px 0; font-size: 0.9rem; }
+        .log-item:last-child { border-bottom: none; }
+        .timestamp { color: #888; font-size: 0.8rem; }
+        .toggle-text { text-align: center; font-size: 0.9rem; margin-top: 10px; }
+        .toggle-text span { color: #00C4B4; cursor: pointer; text-decoration: underline; }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+
+    <div id="login-screen" class="card">
+        <h2 id="auth-title">Who are you?</h2>
+        <input type="text" id="username" placeholder="Username">
+        <input type="password" id="password" placeholder="Password">
+        <button id="auth-btn" onclick="handleAuth()">Login</button>
+        <div class="toggle-text">
+            <span id="toggle-auth-link" onclick="toggleAuthMode()">Need an account? Sign up</span>
+        </div>
+    </div>
+
+    <div id="app-screen" class="hidden">
+        <div class="card">
+            <h2>Hey, <span id="current-user-display"></span>! 👋</h2>
+            <button onclick="logout()" style="background:#ff4d4d;">Logout</button>
+        </div>
+
+        <div class="card">
+            <h3>Current Balances</h3>
+            <div id="balances-list">Loading...</div>
+        </div>
+
+        <div class="card">
+            <h3>Add an Expense</h3>
+            <input type="text" id="expense-desc" placeholder="What was it for?">
+            <p><strong>Specify who owes what:</strong></p>
+            <div id="participants-list"></div>
+            <button onclick="addExpense()">Add Expense</button>
+        </div>
+
+        <div class="card">
+            <h3>Settle Up</h3>
+            <select id="settle-to"></select>
+            <input type="number" id="settle-amount" placeholder="Amount ($)">
+            <button onclick="settleUp()">Pay Friend</button>
+        </div>
+
+        <div class="card">
+            <h3>📜 History Log</h3>
+            <div id="history-list">Loading...</div>
+        </div>
+    </div>
+
+    <script>
+        const SUPABASE_URL = "https://zyohanicaymeypwyofoi.supabase.co";
+        const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp5b2hhbmljYXltZXlwd3lvZm9pIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUwMDIxNDYsImV4cCI6MjA5MDU3ODE0Nn0.mS9ESar9t6tkER7TbcVAa0mo6Zw-LII-QeJfg6pGz6I";
+        
+        // Fixed global variable name to prevent CDN error
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        let currentUser = null;
+        let allUsers = [];
+        let isLoginMode = true;
+
+        // Toggle between Login and Sign Up UI
+        function toggleAuthMode() {
+            isLoginMode = !isLoginMode;
+            const title = document.getElementById('auth-title');
+            const btn = document.getElementById('auth-btn');
+            const link = document.getElementById('toggle-auth-link');
+
+            if (isLoginMode) {
+                title.innerText = "Who are you?";
+                btn.innerText = "Login";
+                link.innerText = "Need an account? Sign up";
+            } else {
+                title.innerText = "Create an Account";
+                btn.innerText = "Sign Up";
+                link.innerText = "Already have an account? Login";
+            }
+        }
+
+        // Handles button click depending on the mode
+        function handleAuth() {
+            if (isLoginMode) {
+                login();
+            } else {
+                signUp();
+            }
+        }
+
+        async function login() {
+            const userInp = document.getElementById('username').value.trim();
+            const passInp = document.getElementById('password').value.trim();
+
+            const { data: users } = await supabaseClient
+                .from('users')
+                .select('*')
+                .eq('username', userInp)
+                .eq('password', passInp);
+
+            if (users && users.length > 0) {
+                currentUser = users[0];
+                enterApp();
+            } else {
+                alert("Wrong username or password!");
+            }
+        }
+
+        async function signUp() {
+            const userInp = document.getElementById('username').value.trim();
+            const passInp = document.getElementById('password').value.trim();
+
+            if (!userInp || !passInp) {
+                alert("Please fill in both fields.");
+                return;
+            }
+
+            // Check if username is already taken
+            const { data: existingUsers } = await supabaseClient
+                .from('users')
+                .select('*')
+                .eq('username', userInp);
+
+            if (existingUsers && existingUsers.length > 0) {
+                alert("That username is taken. Try another one!");
+                return;
+            }
+
+            // Create new user in the database
+            const { data: newUser, error } = await supabaseClient
+                .from('users')
+                .insert([{ username: userInp, password: passInp }])
+                .select();
+
+            if (error) {
+                alert("Error creating user!");
+                return;
+            }
+
+            alert("Account created! Logging you in...");
+            currentUser = newUser[0];
+            enterApp();
+        }
+
+        function enterApp() {
+            document.getElementById('current-user-display').innerText = currentUser.username;
+            document.getElementById('login-screen').classList.add('hidden');
+            document.getElementById('app-screen').classList.remove('hidden');
+            loadAppData();
+        }
+
+        function logout() {
+            currentUser = null;
+            document.getElementById('login-screen').classList.remove('hidden');
+            document.getElementById('app-screen').classList.add('hidden');
+            
+            // Reset fields
+            document.getElementById('username').value = '';
+            document.getElementById('password').value = '';
+            isLoginMode = false; 
+            toggleAuthMode(); // Reset back to Login mode
+        }
+
+        async function loadAppData() {
+            const { data: users } = await supabaseClient.from('users').select('*');
+            allUsers = users;
+
+            // Populate settle dropdown
+            const settleSelect = document.getElementById('settle-to');
+            settleSelect.innerHTML = '';
+            users.forEach(u => {
+                if(u.id !== currentUser.id) {
+                    settleSelect.innerHTML += `<option value="${u.id}">${u.username}</option>`;
+                }
+            });
+
+            // Populate participants list for splitting
+            const partDiv = document.getElementById('participants-list');
+            partDiv.innerHTML = '';
+            users.forEach(u => {
+                partDiv.innerHTML += `
+                    <div class="participant-row">
+                        <label>
+                            <input type="checkbox" class="user-check" data-id="${u.id}" checked>
+                            ${u.username}
+                        </label>
+                        <input type="number" class="user-amount" data-id="${u.id}" placeholder="Owes ($)" step="0.01">
+                    </div>
+                `;
+            });
+
+            // Get expenses, shares and settlements (ordered by newest first)
+            const { data: expenses } = await supabaseClient.from('expenses').select('*').order('created_at', { ascending: false });
+            const { data: shares } = await supabaseClient.from('expense_shares').select('*');
+            const { data: settlements } = await supabaseClient.from('settlements').select('*').order('created_at', { ascending: false });
+
+            calculateBalances(users, expenses, shares, settlements);
+            renderHistory(users, expenses, settlements);
+        }
+
+        function calculateBalances(users, expenses, shares, settlements) {
+            let balances = {};
+            users.forEach(u => balances[u.id] = 0);
+
+            expenses.forEach(exp => {
+                balances[exp.paid_by_id] += parseFloat(exp.total_amount);
+            });
+
+            shares.forEach(share => {
+                balances[share.user_id] -= parseFloat(share.share_amount);
+            });
+
+            settlements.forEach(set => {
+                balances[set.payer_id] += parseFloat(set.amount);
+                balances[set.payee_id] -= parseFloat(set.amount);
+            });
+
+            const balDiv = document.getElementById('balances-list');
+            balDiv.innerHTML = '';
+            users.forEach(u => {
+                let bal = balances[u.id].toFixed(2);
+                let color = bal >= 0 ? 'green' : 'red';
+                let text = bal >= 0 ? `is owed $${bal}` : `owes $${Math.abs(bal)}`;
+                balDiv.innerHTML += `<p><strong>${u.username}</strong> <span style="color:${color}">${text}</span></p>`;
+            });
+        }
+
+        function renderHistory(users, expenses, settlements) {
+            const historyDiv = document.getElementById('history-list');
+            historyDiv.innerHTML = '';
+
+            const userMap = {};
+            users.forEach(u => userMap[u.id] = u.username);
+
+            let historyHTML = "<h4>Expenses</h4>";
+            if (expenses.length === 0) historyHTML += "<p><small>No expenses yet.</small></p>";
+
+            expenses.forEach(exp => {
+                const date = new Date(exp.created_at).toLocaleString();
+                historyHTML += `
+                    <div class="log-item">
+                        <strong>${userMap[exp.paid_by_id]}</strong> paid <strong>$${parseFloat(exp.total_amount).toFixed(2)}</strong> for "${exp.description}".<br>
+                        <span class="timestamp">${date}</span>
+                    </div>`;
+            });
+
+            historyHTML += "<h4 style='margin-top: 1.5rem;'>Settlements</h4>";
+            if (settlements.length === 0) historyHTML += "<p><small>No settlements yet.</small></p>";
+
+            settlements.forEach(set => {
+                const date = new Date(set.created_at).toLocaleString();
+                historyHTML += `
+                    <div class="log-item">
+                        <strong>${userMap[set.payer_id]}</strong> paid <strong>$${parseFloat(set.amount).toFixed(2)}</strong> to <strong>${userMap[set.payee_id]}</strong>.<br>
+                        <span class="timestamp">${date}</span>
+                    </div>`;
+            });
+
+            historyDiv.innerHTML = historyHTML;
+        }
+
+        async function addExpense() {
+            const desc = document.getElementById('expense-desc').value;
+            let total = 0;
+            let sharesToInsert = [];
+
+            const checkBoxes = document.querySelectorAll('.user-check');
+            const amountInputs = document.querySelectorAll('.user-amount');
+
+            checkBoxes.forEach((cb, index) => {
+                if (cb.checked) {
+                    const userId = cb.getAttribute('data-id');
+                    const amt = parseFloat(amountInputs[index].value) || 0;
+                    total += amt;
+                    sharesToInsert.push({ user_id: userId, share_amount: amt });
+                }
+            });
+
+            if (total === 0 || !desc) {
+                alert("Please add a description and specify amounts.");
+                return;
+            }
+
+            const { data: newExp, error } = await supabaseClient
+                .from('expenses')
+                .insert([{ description: desc, total_amount: total, paid_by_id: currentUser.id }])
+                .select();
+
+            if (error) { alert("Error saving expense"); return; }
+
+            const expenseId = newExp[0].id;
+            sharesToInsert = sharesToInsert.map(share => ({ ...share, expense_id: expenseId }));
+            
+            await supabaseClient.from('expense_shares').insert(sharesToInsert);
+
+            document.getElementById('expense-desc').value = '';
+            amountInputs.forEach(inp => inp.value = '');
+            loadAppData();
+        }
+
+        async function settleUp() {
+            const payeeId = document.getElementById('settle-to').value;
+            const amount = document.getElementById('settle-amount').value;
+
+            if (!amount || amount <= 0) {
+                alert("Please enter a valid amount.");
+                return;
+            }
+
+            await supabaseClient.from('settlements').insert([{ 
+                payer_id: currentUser.id, 
+                payee_id: payeeId, 
+                amount: amount 
+            }]);
+
+            document.getElementById('settle-amount').value = '';
+            loadAppData();
+        }
+    </script>
+</body>
+</html>

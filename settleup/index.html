@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Friend Split (Dark Mode)</title>
+    <title>Friend Split (Personalized History)</title>
     <style>
         :root {
             --bg: #121212;
@@ -115,7 +115,7 @@
         <div class="card">
             <h3>Add Expense</h3>
             <input type="text" id="expense-desc" placeholder="What was it for?">
-            <input type="number" id="expense-total-input" placeholder="Total Amount ($)" step="0.01">
+            <input type="number" id="expense-total-input" placeholder="Total Amount (₹)" step="0.01">
             
             <div class="split-header">
                 <p style="margin:0;"><strong>Split details:</strong></p>
@@ -129,12 +129,12 @@
         <div class="card">
             <h3>Settle Up</h3>
             <select id="settle-to"></select>
-            <input type="number" id="settle-amount" placeholder="Amount ($)" step="0.01">
+            <input type="number" id="settle-amount" placeholder="Amount (₹)" step="0.01">
             <button onclick="settleUp()">Confirm Payment</button>
         </div>
 
         <div class="card">
-            <h3>📜 History</h3>
+            <h3>📜 Your History</h3>
             <div id="history-list">Loading...</div>
         </div>
     </div>
@@ -205,7 +205,7 @@
             const { data: settlements } = await supabaseClient.from('settlements').select('*').order('created_at', { ascending: false });
 
             calculateBalances(users, expenses, shares, settlements);
-            renderHistory(users, expenses, settlements);
+            renderHistory(users, expenses, shares, settlements);
         }
 
         function autoSplit() {
@@ -236,25 +236,38 @@
             balDiv.innerHTML = users.map(u => {
                 const b = balances[u.id].toFixed(2);
                 const color = b >= 0 ? 'var(--accent)' : 'var(--danger)';
-                return `<p><strong>${u.username}:</strong> <span style="color:${color}">${b >= 0 ? 'is owed' : 'owes'} $${Math.abs(b)}</span></p>`;
+                return `<p><strong>${u.username}:</strong> <span style="color:${color}">${b >= 0 ? 'is owed' : 'owes'} ₹${Math.abs(b)}</span></p>`;
             }).join('');
         }
 
-        function renderHistory(users, expenses, settlements) {
+        // Logic updated to only show transactions involving the logged-in user
+        function renderHistory(users, expenses, shares, settlements) {
             const uMap = Object.fromEntries(users.map(u => [u.id, u.username]));
             const historyDiv = document.getElementById('history-list');
             
-            let html = "<h4>Expenses</h4>" + (expenses.length ? expenses.map(e => `
-                <div class="log-item">
-                    <strong>${uMap[e.paid_by_id]}</strong> paid <strong>$${parseFloat(e.total_amount).toFixed(2)}</strong> for ${e.description}
-                    <span class="timestamp">${new Date(e.created_at).toLocaleString()}</span>
-                </div>`).join('') : "<p><small>None</small></p>");
+            // Filter expenses where current user either paid or was involved in the split
+            const filteredExpenses = expenses.filter(e => {
+                const isPayer = e.paid_by_id === currentUser.id;
+                const isInvolved = shares.some(s => s.expense_id === e.id && s.user_id === currentUser.id);
+                return isPayer || isInvolved;
+            });
 
-            html += "<h4 style='margin-top:1rem'>Settlements</h4>" + (settlements.length ? settlements.map(s => `
+            // Filter settlements where current user was payer or payee
+            const filteredSettlements = settlements.filter(s => 
+                s.payer_id === currentUser.id || s.payee_id === currentUser.id
+            );
+            
+            let html = "<h4>Your Expenses</h4>" + (filteredExpenses.length ? filteredExpenses.map(e => `
                 <div class="log-item">
-                    <strong>${uMap[s.payer_id]}</strong> → <strong>${uMap[s.payee_id]}</strong>: $${parseFloat(s.amount).toFixed(2)}
+                    <strong>${uMap[e.paid_by_id]}</strong> paid <strong>₹${parseFloat(e.total_amount).toFixed(2)}</strong> for ${e.description}
+                    <span class="timestamp">${new Date(e.created_at).toLocaleString()}</span>
+                </div>`).join('') : "<p><small>No recent activity involving you.</small></p>");
+
+            html += "<h4 style='margin-top:1rem'>Your Settlements</h4>" + (filteredSettlements.length ? filteredSettlements.map(s => `
+                <div class="log-item">
+                    <strong>${uMap[s.payer_id]}</strong> → <strong>${uMap[s.payee_id]}</strong>: ₹${parseFloat(s.amount).toFixed(2)}
                     <span class="timestamp">${new Date(s.created_at).toLocaleString()}</span>
-                </div>`).join('') : "<p><small>None</small></p>");
+                </div>`).join('') : "<p><small>No settlements found.</small></p>");
 
             historyDiv.innerHTML = html;
         }

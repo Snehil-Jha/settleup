@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Friend Split (Personalized History)</title>
+    <title>Friend Split (Personal Balances)</title>
     <style>
         :root {
             --bg: #121212;
@@ -108,7 +108,7 @@
         </div>
 
         <div class="card">
-            <h3>Balances</h3>
+            <h3>Your Balances</h3>
             <div id="balances-list">Loading...</div>
         </div>
 
@@ -222,37 +222,72 @@
             });
         }
 
+        // Updated logic: Calculate personal net balances against each user
         function calculateBalances(users, expenses, shares, settlements) {
-            let balances = {};
-            users.forEach(u => balances[u.id] = 0);
-            expenses.forEach(e => balances[e.paid_by_id] += parseFloat(e.total_amount));
-            shares.forEach(s => balances[s.user_id] -= parseFloat(s.share_amount));
-            settlements.forEach(s => {
-                balances[s.payer_id] += parseFloat(s.amount);
-                balances[s.payee_id] -= parseFloat(s.amount);
+            let userBalances = {}; // Maps other user IDs to their balance relative to current user
+            
+            users.forEach(u => {
+                if (u.id !== currentUser.id) userBalances[u.id] = 0;
+            });
+
+            // 1. Process Expense Shares
+            // We only care about expenses where the currentUser paid or the currentUser is a participant
+            expenses.forEach(exp => {
+                const expShares = shares.filter(s => s.expense_id === exp.id);
+                
+                if (exp.paid_by_id === currentUser.id) {
+                    // Everyone else owes the current user their share
+                    expShares.forEach(s => {
+                        if (s.user_id !== currentUser.id) {
+                            userBalances[s.user_id] += parseFloat(s.share_amount);
+                        }
+                    });
+                } else {
+                    // Current user owes the payer their specific share
+                    const myShare = expShares.find(s => s.user_id === currentUser.id);
+                    if (myShare) {
+                        userBalances[exp.paid_by_id] -= parseFloat(myShare.share_amount);
+                    }
+                }
+            });
+
+            // 2. Process Settlements
+            settlements.forEach(set => {
+                if (set.payer_id === currentUser.id) {
+                    // Current user paid someone else, reducing debt or increasing credit
+                    userBalances[set.payee_id] += parseFloat(set.amount);
+                } else if (set.payee_id === currentUser.id) {
+                    // Someone else paid the current user, reducing credit or increasing debt
+                    userBalances[set.payer_id] -= parseFloat(set.amount);
+                }
             });
 
             const balDiv = document.getElementById('balances-list');
-            balDiv.innerHTML = users.map(u => {
-                const b = balances[u.id].toFixed(2);
+            const otherUsers = users.filter(u => u.id !== currentUser.id);
+            
+            if (otherUsers.length === 0) {
+                balDiv.innerHTML = "<p><small>No other users found.</small></p>";
+                return;
+            }
+
+            balDiv.innerHTML = otherUsers.map(u => {
+                const b = userBalances[u.id].toFixed(2);
                 const color = b >= 0 ? 'var(--accent)' : 'var(--danger)';
-                return `<p><strong>${u.username}:</strong> <span style="color:${color}">${b >= 0 ? 'is owed' : 'owes'} ₹${Math.abs(b)}</span></p>`;
+                const status = b >= 0 ? 'owes you' : 'you owe';
+                return `<p><strong>${u.username}:</strong> <span style="color:${color}">${status} ₹${Math.abs(b)}</span></p>`;
             }).join('');
         }
 
-        // Logic updated to only show transactions involving the logged-in user
         function renderHistory(users, expenses, shares, settlements) {
             const uMap = Object.fromEntries(users.map(u => [u.id, u.username]));
             const historyDiv = document.getElementById('history-list');
             
-            // Filter expenses where current user either paid or was involved in the split
             const filteredExpenses = expenses.filter(e => {
                 const isPayer = e.paid_by_id === currentUser.id;
                 const isInvolved = shares.some(s => s.expense_id === e.id && s.user_id === currentUser.id);
                 return isPayer || isInvolved;
             });
 
-            // Filter settlements where current user was payer or payee
             const filteredSettlements = settlements.filter(s => 
                 s.payer_id === currentUser.id || s.payee_id === currentUser.id
             );
